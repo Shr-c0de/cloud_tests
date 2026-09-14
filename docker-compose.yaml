@@ -1,0 +1,139 @@
+services:
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro,Z
+    depends_on:
+      - post-server-1
+      - post-server-2
+      - post-server-3
+      - post-server-4
+    networks:
+      - app
+
+
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: cars
+      POSTGRES_USER: shreyas
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - app
+
+
+  # =========================
+  # BULKER 1
+  # =========================
+
+  bulker-1:
+    build:
+      context: .
+      dockerfile: ./bulker/Dockerfile
+    expose:
+      - "50051"
+    depends_on:
+      - postgres
+    networks:
+      - app
+
+
+  # =========================
+  # BULKER 2
+  # =========================
+
+  bulker-2:
+    build:
+      context: .
+      dockerfile: ./bulker/Dockerfile
+    expose:
+      - "50051"
+    depends_on:
+      - postgres
+    networks:
+      - app
+
+
+  # =========================
+  # WORKER 1 -> BULKER 1
+  # =========================
+
+  post-server-1:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.post
+    expose:
+      - "8001"
+    depends_on:
+      - bulker-1
+    environment:
+      BULKER_HOST: bulker-1:50051
+    networks:
+      - app
+
+
+  # =========================
+  # WORKER 2 -> BULKER 1
+  # =========================
+
+  post-server-2:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.post
+    expose:
+      - "8001"
+    depends_on:
+      - bulker-1
+    environment:
+      BULKER_HOST: bulker-1:50051
+    networks:
+      - app
+
+
+  # =========================
+  # WORKER 3 -> BULKER 2
+  # =========================
+
+  post-server-3:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.post
+    expose:
+      - "8001"
+    depends_on:
+      - bulker-2
+    environment:
+      BULKER_HOST: bulker-2:50051
+    networks:
+      - app
+
+
+  # =========================
+  # WORKER 4 -> BULKER 2
+  # =========================
+
+  post-server-4:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.post
+    expose:
+      - "8001"
+    depends_on:
+      - bulker-2
+    environment:
+      BULKER_HOST: bulker-2:50051
+    networks:
+      - app
+
+
+volumes:
+  postgres_data:
+
+
+networks:
+  app:

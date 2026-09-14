@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package server;
+
+service Server {
+    rpc Ping(PingRequest) returns (PingResponse);
+}
+
+service Database {
+    rpc Ping(PingRequest) returns (PingResponse);
+}
+
+service Car {
+    rpc Add(CarCreate) returns (CarResponse);
+    rpc AddLocation(Location) returns (LocationResponse);
+    rpc Update(Location) returns (LocationResponse);
+}
+
+message Empty {}
+
+message PingRequest {
+    string message = 1;
+}
+
+message PingResponse {
+    bool success = 1;
+}
+
+message CarCreate {
+    string owner = 1;
+}
+
+message CarRequest {
+    int32 car_id = 1;
+}
+
+message Location {
+    int32 car_id = 1;
+    float car_long = 2;
+    float car_lat = 3;
+}
+
+message CarResponse {
+    int32 car_id = 1;
+    string owner = 2;
+}
+
+message CarsResponse {
+    repeated CarResponse cars = 1;
+}
+
+message LocationResponse {
+    bool success = 1;
+    int32 car_id = 2;
+    float car_long = 3;
+    float car_lat = 4;
+    double db_time=5;
+}
+
+message LocationsResponse {
+    repeated LocationResponse locations = 1;
+}

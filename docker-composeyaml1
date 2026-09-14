@@ -1,0 +1,93 @@
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro,Z
+    networks:
+      - app
+    depends_on:
+      - get-server
+      - post-server
+
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: cars
+      POSTGRES_USER: shreyas
+      POSTGRES_PASSWORD: password
+
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - app
+    
+  bulker:
+    build:
+      context: .
+      dockerfile: bulker/Dockerfile
+    expose:
+      - "50051"
+    depends_on:
+      - postgres
+    networks:
+      - app
+
+  # load-balancer:
+  #   build: ./load_balancer
+  #   ports:
+  #     - "8000:8000"
+  #   networks:
+  #     - app
+  #   depends_on:
+  #     - postgres
+  #     - server
+  #   ulimits:
+  #     nofile:
+  #       soft: 15000
+  #       hard: 15000
+
+  # server:
+  #   build: ./server
+        # dockerfile: server/Dockerfile
+  #
+  #   networks:
+  #     - app
+  #   expose:
+  #     - "8001"
+  #     - "50051"
+  #   # ports:
+  #   #   - "8001:8001"
+  #   depends_on:
+  #     - postgres
+  #     - bulker
+  
+  get-server:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.get
+    expose:
+      - "8001"
+    depends_on:
+      - postgres
+    networks:
+      - app
+
+  post-server:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile.post
+    expose:
+      - "50051"
+      - "8001"
+    depends_on:
+      - bulker
+    networks:
+      - app
+
+volumes:
+  postgres_data:
+
+networks:
+  app:
