@@ -7,6 +7,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from kafka import KafkaProducer
+producer = KafkaProducer(bootstrap_servers='kafka:9092',
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"))
+
 
 channel = None
 car_stub = None
@@ -35,6 +39,7 @@ async def lifespan(app: FastAPI):
     print("[POST] Closing gRPC channel", flush=True)
 
     await channel.close()
+
 
 
 app = FastAPI(
@@ -100,22 +105,17 @@ async def update_car(
     location: LocationCreate
 ):
 
-    response = await car_stub.Update(
-        database_pb2.Location(
-            car_id=car_id,
-            car_long=location.car_long,
-            car_lat=location.car_lat
-        )
-    )
+    producer.send("post-handler", {
+        "car_id":f"{car_id}", 
+        "car_long":f"{location.car_long}",
+        "car_lat":f"{location.car_lat}"
+        })
+    producer.flush()
 
     return {
-        "message": "Update Successful",
+        "message": "Successful",
         "car_id": response.car_id,
         "car_long": response.car_long,
         "car_lat": response.car_lat,
         "database_time": response.db_time
     }
-    # return {
-    #         "database_time": 0
-
-    # }

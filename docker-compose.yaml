@@ -26,6 +26,23 @@ services:
     networks:
       - app
 
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+
+    expose:
+      - "9092"
+
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./kafka/server.properties:/opt/kafka/config/kraft/server.properties:ro,Z
+
+    command:
+      - /opt/kafka/bin/kafka-server-start.sh
+      - /opt/kafka/config/kraft/server.properties
+    networks:
+      - app
+
 
   # =========================
   # BULKER 1
@@ -39,6 +56,7 @@ services:
       - "50051"
     depends_on:
       - postgres
+      - kafka
     networks:
       - app
 
@@ -55,6 +73,7 @@ services:
       - "50051"
     depends_on:
       - postgres
+      - kafka
     networks:
       - app
 
@@ -133,6 +152,7 @@ services:
 
 volumes:
   postgres_data:
+  kafka-data:
 
 
 networks:

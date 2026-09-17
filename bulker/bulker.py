@@ -2,14 +2,21 @@ import grpc
 import database_pb2
 import database_pb2_grpc
 
+import json
 import time
-import queue
 import threading
 
 from concurrent import futures
-from psycopg_pool import ConnectionPool
-from psycopg.rows import dict_row
 
+from kafka import KafkaProducer, KafkaConsumer
+
+from psycopg_pool import ConnectionPool
+
+
+
+# ---------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------
 
 pool = ConnectionPool(
     "host=postgres port=5432 dbname=cars user=shreyas password=password",
@@ -18,22 +25,57 @@ pool = ConnectionPool(
 )
 
 
+# ---------------------------------------------------------
+# Kafka Producer
+# ---------------------------------------------------------
+
+producer = KafkaProducer(
+    bootstrap_servers="kafka:9092",
+
+    # Convert Python dict -> JSON -> bytes
+    value_serializer=lambda value:
+        json.dumps(value).encode("utf-8"),
+
+    # Make sure messages are acknowledged by Kafka
+    acks="all",
+
+    # Retry transient failures
+    retries=5,
+)
+
+
+# ---------------------------------------------------------
+# Kafka Consumer
+# ---------------------------------------------------------
+
+consumer = KafkaConsumer(
+    "post-handler",
+
+    bootstrap_servers="kafka:9092",
+
+    group_id="processor",
+
+    auto_offset_reset="earliest",
+
+    # IMPORTANT:
+    # We manually commit only after PostgreSQL succeeds.
+    enable_auto_commit=False,
+
+    # We don't want Kafka to give us enormous batches.
+    max_poll_records=1000,
+
+    value_deserializer=lambda value:
+        json.loads(value.decode("utf-8")),
+)
+
+
 BATCH_SIZE = 1000
 FLUSH_INTERVAL = 0.030  # 30 ms
 
-update_queue = queue.Queue()
 
-
-class UpdateRequest:
-    def __init__(self, car_id, car_long, car_lat):
-        self.car_id = car_id
-        self.car_long = car_long
-        self.car_lat = car_lat
-
-        self.done = threading.Event()
-        self.success = False
-        self.db_time = 0.0
-
+# ---------------------------------------------------------
+# Kafka consumer / DB worker
+# ---------------------------------------------------------
 
 def bulk_worker():
 
@@ -41,14 +83,39 @@ def bulk_worker():
 
         batch = []
 
-        # Wait for the first request
-        request = update_queue.get()
-        batch.append(request)
+        # -------------------------------------------------
+        # Wait for first Kafka message
+        # -------------------------------------------------
 
-        # Start the batching timer
+        records = consumer.poll(
+            timeout_ms=1000,
+            max_records=BATCH_SIZE
+        )
+
+        if not records:
+            continue
+
+        # Kafka returns:
+        #
+        # {
+        #     TopicPartition(...): [
+        #         ConsumerRecord(...),
+        #         ConsumerRecord(...),
+        #     ]
+        # }
+        #
+        # Flatten it.
+
+        for messages in records.values():
+            print(messages)
+            batch.extend(messages)
+
+        # -------------------------------------------------
+        # Collect more messages for up to FLUSH_INTERVAL
+        # -------------------------------------------------
+
         deadline = time.perf_counter() + FLUSH_INTERVAL
 
-        # Collect requests for up to FLUSH_INTERVAL
         while len(batch) < BATCH_SIZE:
 
             remaining = deadline - time.perf_counter()
@@ -56,31 +123,40 @@ def bulk_worker():
             if remaining <= 0:
                 break
 
-            try:
-                request = update_queue.get(
-                    timeout=remaining
-                )
-                batch.append(request)
+            records = consumer.poll(
+                timeout_ms=max(1, int(remaining * 1000)),
+                max_records=BATCH_SIZE - len(batch)
+            )
 
-            except queue.Empty:
+            if not records:
                 break
 
-        # Execute the batch
+            for messages in records.values():
+                batch.extend(messages)
+
+                if len(batch) >= BATCH_SIZE:
+                    break
+
+        # -------------------------------------------------
+        # Write batch to PostgreSQL
+        # -------------------------------------------------
+
         start_db = time.perf_counter()
 
         try:
 
             with pool.connection() as conn:
+
                 with conn.cursor() as cur:
 
-                    # Build one bulk UPDATE statement
                     values = []
 
-                    for request in batch:
+                    for message in batch:
+
                         values.extend([
-                            request.car_id,
-                            request.car_long,
-                            request.car_lat,
+                            message.value["car_id"],
+                            message.value["car_long"],
+                            message.value["car_lat"],
                         ])
 
                     placeholders = ", ".join(
@@ -94,78 +170,119 @@ def bulk_worker():
                             car_lat = v.car_lat
                         FROM (
                             VALUES {placeholders}
-                        ) AS v(car_id, car_long, car_lat)
+                        ) AS v(
+                            car_id,
+                            car_long,
+                            car_lat
+                        )
                         WHERE l.car_id = v.car_id;
                     """
 
                     cur.execute(query, values)
 
-                    # IDs that actually existed
-                    updated_ids = {
-                        row[0]
-                        for row in cur.execute(
-                            f"""
-                            SELECT car_id
-                            FROM location
-                            WHERE car_id IN (
-                                {", ".join(["%s"] * len(batch))}
-                            );
-                            """,
-                            [request.car_id for request in batch]
-                        )
-                    }
+            # -------------------------------------------------
+            # DB succeeded.
+            #
+            # Now tell Kafka that these messages are processed.
+            # -------------------------------------------------
 
-                    for request in batch:
-                        request.success = (
-                            request.car_id in updated_ids
-                        )
+            consumer.commit()
+
+            db_time = time.perf_counter() - start_db
+
+            print(
+                f"[KAFKA] processed {len(batch)} messages "
+                f"in {db_time * 1000:.2f} ms",
+                flush=True
+            )
 
         except Exception as e:
 
             print(
-                f"[BULK] Database error: {e}",
+                f"[KAFKA] Database error: {e}",
                 flush=True
             )
 
-            for request in batch:
-                request.success = False
+            # IMPORTANT:
+            #
+            # We DO NOT commit the Kafka offsets.
+            #
+            # Therefore these messages will be processed again
+            # after the consumer restarts/rebalances.
+            #
 
-        db_time = time.perf_counter() - start_db
+            time.sleep(1)
 
-        # Notify waiting gRPC calls
-        for request in batch:
-            request.db_time = db_time
-            request.done.set()
 
+# ---------------------------------------------------------
+# gRPC Service
+# ---------------------------------------------------------
 
 class CarService(database_pb2_grpc.CarServicer):
 
     def Update(self, request, context):
 
-        update_queue.put(
-            UpdateRequest(
-                request.car_id,
-                request.car_long,
-                request.car_lat
-            )
-        )
+        message = {
+            "car_id": request.car_id,
+            "car_long": request.car_long,
+            "car_lat": request.car_lat,
+        }
 
-        return database_pb2.LocationResponse(
-            success=True,
-            car_id=request.car_id,
-            car_long=request.car_long,
-            car_lat=request.car_lat,
-            db_time=0
-        )
+        try:
+
+            # Kafka key is useful because messages for the same
+            # car can be routed to the same partition.
+            #
+            # With your current 1 partition topic this doesn't
+            # make a difference yet, but it becomes useful if
+            # you increase the number of partitions.
+
+            future = producer.send(
+                "post-handler",
+                key=str(request.car_id).encode("utf-8"),
+                value=message
+            )
+
+            # Wait until Kafka acknowledges the message.
+            metadata = future.get(timeout=10)
+
+            return database_pb2.LocationResponse(
+                success=True,
+                car_id=request.car_id,
+                car_long=request.car_long,
+                car_lat=request.car_lat,
+                db_time=0
+            )
+
+        except Exception as e:
+
+            print(
+                f"[KAFKA] Producer error: {e}",
+                flush=True
+            )
+
+            context.set_code(
+                grpc.StatusCode.UNAVAILABLE
+            )
+
+            context.set_details(
+                "Failed to write update to Kafka"
+            )
+
+            return database_pb2.LocationResponse(
+                success=False,
+                car_id=request.car_id,
+                car_long=request.car_long,
+                car_lat=request.car_lat,
+                db_time=0
+            )
 
 
     def Add(self, request, context):
 
         with pool.connection() as conn:
 
-            with conn.cursor(
-                row_factory=dict_row
-            ) as cur:
+            with conn.cursor() as cur:
 
                 cur.execute("""
                     INSERT INTO car_info (owner)
@@ -178,8 +295,8 @@ class CarService(database_pb2_grpc.CarServicer):
                 row = cur.fetchone()
 
         return database_pb2.CarResponse(
-            car_id=row["car_id"],
-            owner=row["owner"]
+            car_id=row[0],
+            owner=row[1]
         )
 
 
@@ -187,9 +304,7 @@ class CarService(database_pb2_grpc.CarServicer):
 
         with pool.connection() as conn:
 
-            with conn.cursor(
-                row_factory=dict_row
-            ) as cur:
+            with conn.cursor() as cur:
 
                 cur.execute("""
                     INSERT INTO location (
@@ -209,15 +324,20 @@ class CarService(database_pb2_grpc.CarServicer):
 
         return database_pb2.LocationResponse(
             success=True,
-            car_id=row["car_id"],
-            car_long=row["car_long"],
-            car_lat=row["car_lat"]
+            car_id=row[0],
+            car_long=row[1],
+            car_lat=row[2]
         )
 
 
+# ---------------------------------------------------------
+# gRPC Server
+# ---------------------------------------------------------
+
 def serve():
 
-    # Start bulk worker
+    # Start Kafka -> PostgreSQL worker
+
     worker = threading.Thread(
         target=bulk_worker,
         daemon=True
@@ -225,7 +345,8 @@ def serve():
 
     worker.start()
 
-    # Start gRPC server
+    # Start gRPC
+
     server = grpc.server(
         futures.ThreadPoolExecutor(
             max_workers=50
@@ -249,11 +370,20 @@ def serve():
     )
 
     try:
+
         server.wait_for_termination()
 
     finally:
+
+        producer.flush()
+        producer.close()
+
+        consumer.close()
+
         pool.close()
 
+
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
     serve()

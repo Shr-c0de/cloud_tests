@@ -22,3 +22,5 @@ grpcio
 protobuf
 grpcio
 grpcio-tools
+kafka-python
+crc32c
