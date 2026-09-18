@@ -2,6 +2,7 @@ import grpc
 import os
 import database_pb2
 import database_pb2_grpc
+import json
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -104,18 +105,16 @@ async def update_car(
     car_id: int,
     location: LocationCreate
 ):
-
     producer.send("post-handler", {
-        "car_id":f"{car_id}", 
-        "car_long":f"{location.car_long}",
-        "car_lat":f"{location.car_lat}"
-        })
+        "car_id": f"{car_id}",
+        "car_long": f"{location.car_long}",
+        "car_lat": f"{location.car_lat}"
+    })
     producer.flush()
 
     return {
         "message": "Successful",
-        "car_id": response.car_id,
-        "car_long": response.car_long,
-        "car_lat": response.car_lat,
-        "database_time": response.db_time
+        "car_id": car_id,
+        "car_long": location.car_long,
+        "car_lat": location.car_lat
     }

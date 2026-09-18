@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bulker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bulker
+  template:
+    metadata:
+      labels:
+        app: bulker
+    spec:
+      containers:
+        - name: bulker
+          image: my-bulker:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 50051

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: server
+  template:
+    metadata:
+      labels:
+        app: server
+    spec:
+      containers:
+        - name: server
+          image: my-server:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8001
+          env:
+            - name: BULKER_HOST
+              value: "bulker-service:50051"
