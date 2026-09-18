@@ -243,15 +243,8 @@ The PostgreSQL update happens asynchronously in the bulker.
 
 ### HTTP serving
 
-Nginx listens on:
-
-```text
-http://localhost:8000
-```
-
-Requests sent to port `8000` are distributed between the four API servers.
-
-The Nginx configuration is:
+Kubernetes handles the load balancing and routing internally, it exposes the port 8000. 
+It routes to the post servers, which accept the REST APIs, and then the data is moved to the kafka queue from which the bulker reads and pushes to the database.
 
 ## Custom Load Balancer
 
