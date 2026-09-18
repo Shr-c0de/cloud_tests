@@ -9,6 +9,7 @@ The project implements two different deployment approaches:
 
 The system is designed primarily for performance testing and studying how bottlenecks move between different layers of a distributed application.
 
+## Results
 current statistics(data output from driver.py):
 ```
 
@@ -57,7 +58,6 @@ RPS:          1494.83
 Latency avg:  164.035 ms
 Latency p99:  264.265 ms
 ```
-
 
 ### Kubernetes
 
@@ -523,3 +523,4 @@ The current Kafka deployment is intentionally a small single-node setup:
 The Kubernetes PostgreSQL and Kafka deployments also use ephemeral Kubernetes storage (`emptyDir` for Kafka and no persistent volume for PostgreSQL), so the Kubernetes setup should be treated as a local testing environment rather than a production deployment.
 
 The database credentials currently stored in the Compose and Kubernetes manifests are also intended only for local experimentation.
+
