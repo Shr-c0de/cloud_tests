@@ -277,23 +277,19 @@ kind create cluster --config k8s-lab/kind-config.yaml
 
 ### Build the application images
 
-Build the server image:
+Build the post server, bulker and get server image:
 
 ```bash
 docker build -f server/Dockerfile.post -t my-server:local .
-```
-
-Build the bulker image:
-
-```bash
 docker build -f bulker/Dockerfile -t my-bulker:local .
+docker build -t my-get-server:local -f server/Dockerfile.get .
 ```
-
 Load the images into Kind:
 
 ```bash
-kind load docker-image my-server:local
-kind load docker-image my-bulker:local
+kind load docker-image my-server:local --name k8s-lab
+kind load docker-image my-bulker:local --name k8s-lab
+kind load docker-image my-get-server:local --name k8s-lab
 ```
 
 ### Deploy the stack

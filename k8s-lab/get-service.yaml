@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: server-service
+  name: get-server-service
 spec:
   selector:
-    app: server
+    app: get-server
   ports:
     - port: 8001
       targetPort: 8001

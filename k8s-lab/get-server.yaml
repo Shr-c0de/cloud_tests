@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: get-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: get-server
+  template:
+    metadata:
+      labels:
+        app: get-server
+    spec:
+      containers:
+        - name: get-server
+          image: my-get-server:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8001
